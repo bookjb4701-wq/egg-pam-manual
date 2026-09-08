@@ -1,16 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-
-const String deviceName = 'ESP32-EGG-PAM';
-
-const String serviceUuid =
-    '6E400001-B5A3-F393-E0A9-E50E24DCCA9E';
-
-const String characteristicUuid =
-    '6E400002-B5A3-F393-E0A9-E50E24DCCA9E';
 
 void main() {
   runApp(const EggPamApp());
@@ -28,58 +19,38 @@ class EggPamApp extends StatelessWidget {
         useMaterial3: true,
         colorSchemeSeed: Colors.blue,
       ),
-      home: const ControllerPage(),
+      home: const HomePage(),
     );
   }
 }
 
-class ControllerPage extends StatefulWidget {
-  const ControllerPage({super.key});
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
 
   @override
-  State<ControllerPage> createState() => _ControllerPageState();
+  State<HomePage> createState() => _HomePageState();
 }
 
-class _ControllerPageState extends State<ControllerPage> {
+class _HomePageState extends State<HomePage> {
+  static const String deviceName = 'ESP32-EGG-PAM';
+
   BluetoothDevice? device;
   BluetoothCharacteristic? characteristic;
-
-  StreamSubscription<List<ScanResult>>? scanSubscription;
-  StreamSubscription<BluetoothConnectionState>? connectionSubscription;
 
   bool scanning = false;
   bool connected = false;
 
-  String status = 'ยังไม่ได้เชื่อมต่อ';
+  StreamSubscription<List<ScanResult>>? scanSubscription;
 
-  @override
-  void dispose() {
-    scanSubscription?.cancel();
-    connectionSubscription?.cancel();
-
-    if (device != null) {
-      device!.disconnect();
-    }
-
-    super.dispose();
-  }
-
-  // ==============================
-  // ค้นหา ESP32
-  // ==============================
-
-  Future<void> scanAndConnect() async {
-    if (scanning) return;
-
+  Future<void> scanDevice() async {
     setState(() {
       scanning = true;
-      status = 'กำลังค้นหา ESP32-EGG-PAM...';
     });
 
     try {
       await FlutterBluePlus.stopScan();
 
-      await scanSubscription?.cancel();
+      scanSubscription?.cancel();
 
       scanSubscription =
           FlutterBluePlus.onScanResults.listen((results) async {
@@ -91,32 +62,45 @@ class _ControllerPageState extends State<ControllerPage> {
 
             device = result.device;
 
-            await connectToDevice();
+            try {
+              await device!.connect();
 
-            return;
+              final services = await device!.discoverServices();
+
+              for (final service in services) {
+                for (final c in service.characteristics) {
+                  if (c.properties.write ||
+                      c.properties.writeWithoutResponse) {
+                    characteristic = c;
+                    break;
+                  }
+                }
+
+                if (characteristic != null) {
+                  break;
+                }
+              }
+
+              if (characteristic != null) {
+                setState(() {
+                  connected = true;
+                });
+              }
+            } catch (e) {
+              debugPrint('Connect error: $e');
+            }
+
+            break;
           }
         }
       });
 
       await FlutterBluePlus.startScan(
-        timeout: const Duration(seconds: 8),
+        withNames: [deviceName],
+        timeout: const Duration(seconds: 10),
       );
-
-      await Future.delayed(
-        const Duration(seconds: 9),
-      );
-
-      if (!connected && mounted) {
-        setState(() {
-          status = 'ไม่พบ ESP32-EGG-PAM';
-        });
-      }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          status = 'เกิดข้อผิดพลาด: $e';
-        });
-      }
+      debugPrint('Scan error: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -126,85 +110,6 @@ class _ControllerPageState extends State<ControllerPage> {
     }
   }
 
-  // ==============================
-  // เชื่อมต่อ ESP32
-  // ==============================
-
-  Future<void> connectToDevice() async {
-    if (device == null) return;
-
-    try {
-      setState(() {
-        status = 'กำลังเชื่อมต่อ...';
-      });
-
-      await connectionSubscription?.cancel();
-
-      connectionSubscription =
-          device!.connectionState.listen((state) {
-        if (!mounted) return;
-
-        setState(() {
-          connected =
-              state == BluetoothConnectionState.connected;
-
-          if (connected) {
-            status = 'เชื่อมต่อ ESP32 แล้ว';
-          } else {
-            status = 'ตัดการเชื่อมต่อ';
-            characteristic = null;
-          }
-        });
-      });
-
-      await device!.connect(
-        timeout: const Duration(seconds: 10),
-      );
-
-      final services =
-          await device!.discoverServices();
-
-      for (final service in services) {
-        if (service.uuid.toString().toUpperCase() ==
-            serviceUuid.toUpperCase()) {
-          for (final c in service.characteristics) {
-            if (c.uuid.toString().toUpperCase() ==
-                characteristicUuid.toUpperCase()) {
-              characteristic = c;
-
-              if (mounted) {
-                setState(() {
-                  connected = true;
-                  status =
-                      'ESP32-EGG-PAM เชื่อมต่อแล้ว';
-                });
-              }
-
-              return;
-            }
-          }
-        }
-      }
-
-      if (mounted) {
-        setState(() {
-          status = 'ไม่พบ Characteristic';
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          connected = false;
-          status = 'เชื่อมต่อไม่ได้';
-        });
-      }
-    }
-  }
-
-  // ==============================
-  // ส่งคำสั่งไป ESP32
-  // ==============================
-
   Future<void> sendCommand(String command) async {
     if (!connected || characteristic == null) {
       return;
@@ -212,94 +117,51 @@ class _ControllerPageState extends State<ControllerPage> {
 
     try {
       await characteristic!.write(
-        utf8.encode(command),
+        command.codeUnits,
         withoutResponse: false,
       );
-
-      debugPrint('ส่งคำสั่ง: $command');
     } catch (e) {
-      debugPrint('ส่งคำสั่งไม่สำเร็จ: $e');
+      debugPrint('Send error: $e');
     }
   }
 
-  // ==============================
-  // ปุ่มควบคุม
-  // ==============================
-
   Widget controlButton({
-    required String text,
-    required String command,
     required IconData icon,
-    double size = 80,
+    required String command,
+    required double size,
   }) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: GestureDetector(
-        onTapDown: (_) {
-          sendCommand(command);
-        },
-        onTapUp: (_) {
-          sendCommand('S');
-        },
-        onTapCancel: () {
-          sendCommand('S');
-        },
-        child: ElevatedButton(
-          onPressed: () {},
-          style: ElevatedButton.styleFrom(
-            shape: const CircleBorder(),
-            padding: EdgeInsets.zero,
-          ),
-          child: Column(
-            mainAxisAlignment:
-                MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 32),
-              Text(
-                text,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
+    return GestureDetector(
+      onTapDown: (_) {
+        sendCommand(command);
+      },
+      onTapUp: (_) {
+        sendCommand('S');
+      },
+      onTapCancel: () {
+        sendCommand('S');
+      },
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: connected ? Colors.blue : Colors.grey,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Icon(
+          icon,
+          color: Colors.white,
+          size: size * 0.45,
         ),
       ),
     );
   }
 
-  // ==============================
-  // ปุ่มหยุดฉุกเฉิน
-  // ==============================
-
-  Widget emergencyButton() {
-    return SizedBox(
-      width: double.infinity,
-      height: 65,
-      child: ElevatedButton.icon(
-        onPressed: () {
-          sendCommand('S');
-        },
-        icon: const Icon(
-          Icons.warning,
-          size: 30,
-        ),
-        label: const Text(
-          'EMERGENCY STOP',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
+  @override
+  void dispose() {
+    scanSubscription?.cancel();
+    device?.disconnect();
+    super.dispose();
   }
-
-  // ==============================
-  // หน้าจอ
-  // ==============================
 
   @override
   Widget build(BuildContext context) {
@@ -309,110 +171,99 @@ class _ControllerPageState extends State<ControllerPage> {
         centerTitle: true,
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            children: [
-              // สถานะ Bluetooth
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      Icon(
-                        connected
-                            ? Icons.bluetooth_connected
-                            : Icons.bluetooth_disabled,
-                        size: 35,
-                      ),
-                      const SizedBox(width: 15),
-                      Expanded(
-                        child: Text(
-                          status,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
+        child: Column(
+          children: [
+            const SizedBox(height: 20),
+
+            Text(
+              connected ? 'เชื่อมต่อแล้ว' : 'ยังไม่ได้เชื่อมต่อ',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: connected ? Colors.green : Colors.red,
+              ),
+            ),
+
+            const SizedBox(height: 15),
+
+            ElevatedButton.icon(
+              onPressed: scanning ? null : scanDevice,
+              icon: const Icon(Icons.bluetooth_searching),
+              label: Text(
+                scanning ? 'กำลังค้นหา...' : 'ค้นหา ESP32',
+              ),
+            ),
+
+            const SizedBox(height: 40),
+
+            controlButton(
+              icon: Icons.arrow_upward,
+              command: 'F',
+              size: 90,
+            ),
+
+            const SizedBox(height: 15),
+
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                controlButton(
+                  icon: Icons.arrow_back,
+                  command: 'L',
+                  size: 90,
+                ),
+
+                const SizedBox(width: 20),
+
+                GestureDetector(
+                  onTap: () {
+                    sendCommand('S');
+                  },
+                  child: Container(
+                    width: 90,
+                    height: 90,
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Icon(
+                      Icons.stop,
+                      color: Colors.white,
+                      size: 45,
+                    ),
                   ),
                 ),
-              ),
 
-              const SizedBox(height: 15),
+                const SizedBox(width: 20),
 
-              // ปุ่มค้นหา
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton.icon(
-                  onPressed:
-                      scanning ? null : scanAndConnect,
-                  icon: Icon(
-                    scanning
-                        ? Icons.search
-                        : Icons.bluetooth_searching,
-                  ),
-                  label: Text(
-                    scanning
-                        ? 'กำลังค้นหา...'
-                        : 'ค้นหา ESP32-EGG-PAM',
-                  ),
+                controlButton(
+                  icon: Icons.arrow_forward,
+                  command: 'R',
+                  size: 90,
                 ),
-              ),
+              ],
+            ),
 
-              const Spacer(),
+            const SizedBox(height: 15),
 
-              // เดินหน้า
-              controlButton(
-                text: 'เดินหน้า',
-                command: 'F',
-                icon: Icons.keyboard_arrow_up,
-              ),
+            controlButton(
+              icon: Icons.arrow_downward,
+              command: 'B',
+              size: 90,
+            ),
 
-              const SizedBox(height: 15),
+            const SizedBox(height: 30),
 
-              // ซ้าย STOP ขวา
-              Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.spaceEvenly,
-                children: [
-                  controlButton(
-                    text: 'ซ้าย',
-                    command: 'L',
-                    icon: Icons.keyboard_arrow_left,
-                  ),
+            const Text(
+              'F = เดินหน้า   B = ถอยหลัง',
+              style: TextStyle(fontSize: 15),
+            ),
 
-                  controlButton(
-                    text: 'STOP',
-                    command: 'S',
-                    icon: Icons.stop,
-                  ),
-
-                  controlButton(
-                    text: 'ขวา',
-                    command: 'R',
-                    icon: Icons.keyboard_arrow_right,
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 15),
-
-              // ถอยหลัง
-              controlButton(
-                text: 'ถอยหลัง',
-                command: 'B',
-                icon: Icons.keyboard_arrow_down,
-              ),
-
-              const Spacer(),
-
-              // Emergency Stop
-              emergencyButton(),
-            ],
-          ),
+            const Text(
+              'L = ซ้าย   R = ขวา   S = หยุด',
+              style: TextStyle(fontSize: 15),
+            ),
+          ],
         ),
       ),
     );
