@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 jobs:
@@ -12,43 +11,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # =========================
-      # 1. Checkout
-      # =========================
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      # =========================
-      # 2. Setup Flutter
-      # =========================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # =========================
-      # 3. Flutter version
-      # =========================
       - name: Flutter version
         run: flutter --version
 
-      # =========================
-      # 4. ลบ Android เก่า
-      # =========================
-      - name: Remove old Android project
-        run: rm -rf android
-
-      # =========================
-      # 5. สร้าง Android project ใหม่
-      # ใช้ Android embedding รุ่นใหม่
-      # =========================
       - name: Create Android project
-        run: flutter create . --platforms=android
+        run: |
+          flutter create . --platforms=android
+          rm -rf test
 
-      # =========================
-      # 6. ตั้งค่า Android BLE permissions
-      # =========================
       - name: Add Bluetooth permissions
         run: |
           python3 - <<'PY'
@@ -95,27 +75,15 @@ jobs:
           path.write_text(text)
           PY
 
-      # =========================
-      # 7. Get packages
-      # =========================
       - name: Get packages
         run: flutter pub get
 
-      # =========================
-      # 8. Analyze
-      # =========================
       - name: Analyze
         run: flutter analyze
 
-      # =========================
-      # 9. Build APK
-      # =========================
       - name: Build APK
         run: flutter build apk --release
 
-      # =========================
-      # 10. Upload APK
-      # =========================
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
