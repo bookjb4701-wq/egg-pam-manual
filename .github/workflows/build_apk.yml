@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+
   workflow_dispatch:
 
 jobs:
@@ -12,23 +13,39 @@ jobs:
 
     steps:
 
+      # =========================
+      # 1. Checkout
+      # =========================
       - name: Checkout
         uses: actions/checkout@v4
 
+      # =========================
+      # 2. Setup Flutter
+      # =========================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
+      # =========================
+      # 3. Flutter version
+      # =========================
       - name: Flutter version
         run: flutter --version
 
+      # =========================
+      # 4. สร้าง Android project
+      # =========================
       - name: Create Android project
         run: |
           flutter create . --platforms=android
           rm -rf test
 
+      # =========================
+      # 5. เพิ่ม Bluetooth permissions
+      # ถ้ามีอยู่แล้วจะไม่เพิ่มซ้ำ
+      # =========================
       - name: Add Bluetooth permissions
         run: |
           python3 - <<'PY'
@@ -66,24 +83,37 @@ jobs:
                   android:maxSdkVersion="28" />
           '''
 
-          text = text.replace(
-              '<application',
-              permissions + '\n\n    <application',
-              1
-          )
+          if 'android.hardware.bluetooth_le' not in text:
+              text = text.replace(
+                  '<application',
+                  permissions + '\n\n    <application',
+                  1
+              )
 
           path.write_text(text)
           PY
 
+      # =========================
+      # 6. Get packages
+      # =========================
       - name: Get packages
         run: flutter pub get
 
+      # =========================
+      # 7. Analyze
+      # =========================
       - name: Analyze
         run: flutter analyze
 
+      # =========================
+      # 8. Build APK
+      # =========================
       - name: Build APK
         run: flutter build apk --release
 
+      # =========================
+      # 9. Upload APK
+      # =========================
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
