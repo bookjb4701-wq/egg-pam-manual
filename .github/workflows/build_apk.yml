@@ -1,36 +1,121 @@
-name: Build Android APK
+name: Build APK
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
+
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
+      # =========================
+      # 1. Checkout
+      # =========================
       - name: Checkout
         uses: actions/checkout@v4
 
+      # =========================
+      # 2. Setup Flutter
+      # =========================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
 
+      # =========================
+      # 3. Flutter version
+      # =========================
       - name: Flutter version
         run: flutter --version
 
+      # =========================
+      # 4. ลบ Android เก่า
+      # =========================
+      - name: Remove old Android project
+        run: rm -rf android
+
+      # =========================
+      # 5. สร้าง Android project ใหม่
+      # ใช้ Android embedding รุ่นใหม่
+      # =========================
+      - name: Create Android project
+        run: flutter create . --platforms=android
+
+      # =========================
+      # 6. ตั้งค่า Android BLE permissions
+      # =========================
+      - name: Add Bluetooth permissions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("android/app/src/main/AndroidManifest.xml")
+          text = path.read_text()
+
+          permissions = '''
+              <uses-feature
+                  android:name="android.hardware.bluetooth_le"
+                  android:required="false" />
+
+              <uses-permission
+                  android:name="android.permission.BLUETOOTH_SCAN"
+                  android:usesPermissionFlags="neverForLocation" />
+
+              <uses-permission
+                  android:name="android.permission.BLUETOOTH_CONNECT" />
+
+              <uses-permission
+                  android:name="android.permission.BLUETOOTH"
+                  android:maxSdkVersion="30" />
+
+              <uses-permission
+                  android:name="android.permission.BLUETOOTH_ADMIN"
+                  android:maxSdkVersion="30" />
+
+              <uses-permission
+                  android:name="android.permission.ACCESS_FINE_LOCATION"
+                  android:maxSdkVersion="30" />
+
+              <uses-permission
+                  android:name="android.permission.ACCESS_COARSE_LOCATION"
+                  android:maxSdkVersion="28" />
+          '''
+
+          text = text.replace(
+              '<application',
+              permissions + '\n\n    <application',
+              1
+          )
+
+          path.write_text(text)
+          PY
+
+      # =========================
+      # 7. Get packages
+      # =========================
       - name: Get packages
         run: flutter pub get
 
+      # =========================
+      # 8. Analyze
+      # =========================
       - name: Analyze
         run: flutter analyze
 
+      # =========================
+      # 9. Build APK
+      # =========================
       - name: Build APK
         run: flutter build apk --release
 
+      # =========================
+      # 10. Upload APK
+      # =========================
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
